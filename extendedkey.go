@@ -18,11 +18,10 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/btcutil/base58"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/Causevest/base58"
+	btcec "github.com/Causevest/xcvec"
+	"github.com/Causevest/xcvec/chainhash"
+	"golang.org/x/crypto/sha3"
 )
 
 const (
@@ -375,8 +374,8 @@ func (k *ExtendedKey) Derive(i uint32) (*ExtendedKey, error) {
 	}
 
 	// The fingerprint of the parent for the derived child is the first 4
-	// bytes of the RIPEMD160(SHA256(parentPubKey)).
-	parentFP := btcutil.Hash160(k.pubKeyBytes())[:4]
+	// bytes of the (ben: truncated sha3).
+	parentFP := Hash160(k.pubKeyBytes())[:4]
 	return NewExtendedKey(k.version, childKey, childChainCode, parentFP,
 		k.depth+1, i, isPrivate), nil
 }
@@ -462,7 +461,7 @@ func (k *ExtendedKey) DeriveNonStandard(i uint32) (*ExtendedKey, error) {
 		childKey = childKeyPub.SerializeCompressed()
 	}
 
-	parentFP := btcutil.Hash160(k.pubKeyBytes())[:4]
+	parentFP := Hash160(k.pubKeyBytes())[:4]
 	return NewExtendedKey(k.version, childKey, childChainCode, parentFP,
 		k.depth+1, i, isPrivate), nil
 }
@@ -489,20 +488,29 @@ func (k *ExtendedKey) Neuter() (*ExtendedKey, error) {
 		return k, nil
 	}
 
-	// Get the associated public extended key version bytes.
-	version, err := chaincfg.HDPrivateKeyToPublicKeyID(k.version)
-	if err != nil {
-		return nil, err
-	}
+	/*
+		// Get the associated public extended key version bytes.
+		version, err := chaincfg.HDPrivateKeyToPublicKeyID(k.version)
+		if err != nil {
+			return nil, err
+		}
+	*/
 
 	// Convert it to an extended public key.  The key for the new extended
 	// key will simply be the pubkey of the current extended private key.
 	//
 	// This is the function N((k,c)) -> (K, c) from [BIP32].
-	return NewExtendedKey(version, k.pubKeyBytes(), k.chainCode, k.parentFP,
+	return NewExtendedKey(XCVersion(), k.pubKeyBytes(), k.chainCode, k.parentFP,
 		k.depth, k.childNum, false), nil
 }
 
+// XCVersion version of the xcvAlpha protocol in 4 byte buffer
+// go doesn't allow array constants, so it is a function
+func XCVersion() []byte {
+	return []byte{0x00, 0x00, 0x00, 0x01}
+}
+
+/* Causevest: disabling this to remove dependancy on chaincfg
 // CloneWithVersion returns a new extended key cloned from this extended key,
 // but using the provided HD version bytes. The version must be a private HD
 // key ID for an extended private key, and a public HD key ID for an extended
@@ -533,6 +541,7 @@ func (k *ExtendedKey) CloneWithVersion(version []byte) (*ExtendedKey, error) {
 	return NewExtendedKey(version, k.key, k.chainCode, k.parentFP,
 		k.depth, k.childNum, k.isPrivate), nil
 }
+*/
 
 // ECPubKey converts the extended key to a btcec public key and returns it.
 func (k *ExtendedKey) ECPubKey() (*btcec.PublicKey, error) {
@@ -552,11 +561,24 @@ func (k *ExtendedKey) ECPrivKey() (*btcec.PrivateKey, error) {
 	return privKey, nil
 }
 
-// Address converts the extended key to a standard bitcoin pay-to-pubkey-hash
-// address for the passed network.
-func (k *ExtendedKey) Address(net *chaincfg.Params) (*btcutil.AddressPubKeyHash, error) {
-	pkHash := btcutil.Hash160(k.pubKeyBytes())
-	return btcutil.NewAddressPubKeyHash(pkHash, net)
+// Adding a new address function to make extracting raw address bytes easier
+
+// Address returns the 160 byte raw address as a byte slice
+func (k *ExtendedKey) Address() ([]byte, error) {
+	pubKey, err := k.ECPubKey()
+	if err != nil {
+		return nil, err
+	}
+
+	pubBytes := pubKey.SerializeCompressed()
+
+	return Hash160(pubBytes), nil
+}
+
+// Causevest: Hash160 hash function that returns 160 bytes. Uses a truncated SHA3 over RIPEMD160(SHA256(b))
+func Hash160(b []byte) []byte {
+	hash := sha3.Sum256(b)
+	return hash[:20]
 }
 
 // paddedAppend appends the src byte slice to dst, returning the new slice.
@@ -599,6 +621,9 @@ func (k *ExtendedKey) String() string {
 	return base58.Encode(serializedBytes)
 }
 
+/*
+These are unnecessary for xcv purposes.
+
 // IsForNet returns whether or not the extended key is associated with the
 // passed bitcoin network.
 func (k *ExtendedKey) IsForNet(net *chaincfg.Params) bool {
@@ -615,6 +640,8 @@ func (k *ExtendedKey) SetNet(net *chaincfg.Params) {
 		k.version = net.HDPublicKeyID[:]
 	}
 }
+
+*/
 
 // zero sets all bytes in the passed slice to zero.  This is used to
 // explicitly clear private key material from memory.
@@ -649,7 +676,7 @@ func (k *ExtendedKey) Zero() {
 // will derive to an unusable secret key.  The ErrUnusable error will be
 // returned if this should occur, so the caller must check for it and generate a
 // new seed accordingly.
-func NewMaster(seed []byte, net *chaincfg.Params) (*ExtendedKey, error) {
+func NewMaster(seed []byte) (*ExtendedKey, error) {
 	// Per [BIP32], the seed must be in range [MinSeedBytes, MaxSeedBytes].
 	if len(seed) < MinSeedBytes || len(seed) > MaxSeedBytes {
 		return nil, ErrInvalidSeedLen
@@ -674,7 +701,7 @@ func NewMaster(seed []byte, net *chaincfg.Params) (*ExtendedKey, error) {
 	}
 
 	parentFP := []byte{0x00, 0x00, 0x00, 0x00}
-	return NewExtendedKey(net.HDPrivateKeyID[:], secretKey, chainCode,
+	return NewExtendedKey(XCVersion(), secretKey, chainCode,
 		parentFP, 0, 0, true), nil
 }
 
