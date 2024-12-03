@@ -581,6 +581,15 @@ func Hash160(b []byte) []byte {
 	return hash[:20]
 }
 
+// PubKey returns the serialized compressed pubkey (all pubkeys are compressed in XCV)
+func (k *ExtendedKey) PubKey() ([]byte, error) {
+	pubKey, err := k.ECPubKey()
+	if err != nil {
+		return nil, err
+	}
+	return pubKey.SerializeCompressed(), nil
+}
+
 // paddedAppend appends the src byte slice to dst, returning the new slice.
 // If the length of the source is smaller than the passed size, leading zero
 // bytes are appended to the dst slice before appending src.
@@ -619,6 +628,41 @@ func (k *ExtendedKey) String() string {
 	checkSum := chainhash.DoubleHashB(serializedBytes)[:4]
 	serializedBytes = append(serializedBytes, checkSum...)
 	return base58.Encode(serializedBytes)
+}
+
+// Hash serializes the key and then hashes it with SHA3
+// and returns a hex string as a 256 byte fingerprint of the key
+func (k *ExtendedKey) Hash() string {
+	if len(k.key) == 0 {
+		return "zeroed extended key"
+	}
+
+	var childNumBytes [4]byte
+	binary.BigEndian.PutUint32(childNumBytes[:], k.childNum)
+
+	// The serialized format is:
+	//   version (4) || depth (1) || parent fingerprint (4)) ||
+	//   child num (4) || chain code (32) || key data (33) || checksum (4)
+	serializedBytes := make([]byte, 0, serializedKeyLen+4)
+	serializedBytes = append(serializedBytes, k.version...)
+	serializedBytes = append(serializedBytes, k.depth)
+	serializedBytes = append(serializedBytes, k.parentFP...)
+	serializedBytes = append(serializedBytes, childNumBytes[:]...)
+	serializedBytes = append(serializedBytes, k.chainCode...)
+	if k.isPrivate {
+		serializedBytes = append(serializedBytes, 0x00)
+		serializedBytes = paddedAppend(32, serializedBytes, k.key)
+	} else {
+		serializedBytes = append(serializedBytes, k.pubKeyBytes()...)
+	}
+
+	// checkSum := chainhash.DoubleHashB(serializedBytes)[:4]
+	// in xcv, all hashes are sha3, not double sha256
+	hash := sha3.Sum256(serializedBytes)
+	checkSum := hash[:4]
+	serializedBytes = append(serializedBytes, checkSum...)
+	hash = sha3.Sum256(serializedBytes)
+	return fmt.Sprintf("%x", hash)
 }
 
 /*
