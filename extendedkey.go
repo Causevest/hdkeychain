@@ -21,7 +21,7 @@ import (
 	"github.com/Causevest/base58"
 	btcec "github.com/Causevest/xcvec"
 	"github.com/Causevest/xcvec/chainhash"
-	"golang.org/x/crypto/sha3"
+	"lukechampine.com/blake3"
 )
 
 const (
@@ -374,7 +374,7 @@ func (k *ExtendedKey) Derive(i uint32) (*ExtendedKey, error) {
 	}
 
 	// The fingerprint of the parent for the derived child is the first 4
-	// bytes of the (ben: truncated sha3).
+	// bytes of the  hash
 	parentFP := Hash160(k.pubKeyBytes())[:4]
 	return NewExtendedKey(k.version, childKey, childChainCode, parentFP,
 		k.depth+1, i, isPrivate), nil
@@ -577,7 +577,7 @@ func (k *ExtendedKey) Address() ([]byte, error) {
 
 // Causevest: Hash160 hash function that returns 160 bytes. Uses a truncated SHA3 over RIPEMD160(SHA256(b))
 func Hash160(b []byte) []byte {
-	hash := sha3.Sum256(b)
+	hash := blake3.Sum256(b)
 	return hash[:20]
 }
 
@@ -657,11 +657,11 @@ func (k *ExtendedKey) Hash() string {
 	}
 
 	// checkSum := chainhash.DoubleHashB(serializedBytes)[:4]
-	// in xcv, all hashes are sha3, not double sha256
-	hash := sha3.Sum256(serializedBytes)
+	// in xcv, all hashes are blake3, not double sha256
+	hash := blake3.Sum256(serializedBytes)
 	checkSum := hash[:4]
 	serializedBytes = append(serializedBytes, checkSum...)
-	hash = sha3.Sum256(serializedBytes)
+	hash = blake3.Sum256(serializedBytes)
 	return fmt.Sprintf("%x", hash)
 }
 
