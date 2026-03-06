@@ -113,6 +113,7 @@ type ExtendedKey struct {
 	childNum  uint32
 	version   []byte
 	isPrivate bool
+	address   []byte // cached Address() result
 }
 
 // NewExtendedKey returns a new instance of an extended key with the given
@@ -565,14 +566,17 @@ func (k *ExtendedKey) ECPrivKey() (*btcec.PrivateKey, error) {
 
 // Address returns the 160 byte raw address as a byte slice
 func (k *ExtendedKey) Address() ([]byte, error) {
-	pubKey, err := k.ECPubKey()
-	if err != nil {
+	if len(k.address) > 0 {
+		return k.address, nil
+	}
+
+	pkBytes := k.pubKeyBytes()
+	if _, err := btcec.ParsePubKey(pkBytes); err != nil {
 		return nil, err
 	}
 
-	pubBytes := pubKey.SerializeCompressed()
-
-	return Hash160(pubBytes), nil
+	k.address = Hash160(pkBytes)
+	return k.address, nil
 }
 
 // Causevest: Hash160 hash function that returns 160 bytes. Uses a truncated SHA3 over RIPEMD160(SHA256(b))
@@ -705,8 +709,10 @@ func (k *ExtendedKey) Zero() {
 	zero(k.pubKey)
 	zero(k.chainCode)
 	zero(k.parentFP)
+	zero(k.address)
 	k.version = nil
 	k.key = nil
+	k.address = nil
 	k.depth = 0
 	k.childNum = 0
 	k.isPrivate = false
